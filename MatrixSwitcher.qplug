@@ -1,0 +1,1071 @@
+-- ============================================================================
+-- MatrixSwitcher  Q-SYS Plugin (Framework version)
+-- ----------------------------------------------------------------------------
+-- 通用矩阵切换器：通过 TCP 向矩阵设备发送切换命令。
+--
+-- 功能：
+--   1) 输入/输出名字可自定义（Config 页运行时文本框，实时刷新按钮文字）
+--   2) 输入/输出数量可自定义（Num Inputs / Num Outputs 属性，默认 8x8 最大 16x16）
+--   3) 先点输出布防(arm)，再点输入路由到该输出
+--   4) 点输入可高亮显示它当前馈送的输出
+--   5) 输入/输出代码分开自定义；Config 页用 {I}/{O} 模板拼接生成最终切换命令，
+--      顺序与前后缀完全自由（例：IN{I} OUT{O}\r 或 {O}*{I}）
+--
+-- 设计期配置（Properties，运行时只读）：
+--   Num Inputs / Num Outputs / IP Address / Port / Auto Reconnect / Reconnect Interval / Disable Internal Send
+-- 运行期面板（Main/Config 两页）见 GetControlLayout。
+-- 引出引脚：Cmd Out Raw（原始命令，含 \r\n）/ Cmd Out Hex（\xNN 转义，可直接接 Command Buttons）/ Send Trig（命令变化时脉冲，v1.0.1）。
+-- ============================================================================
+
+PluginInfo = {
+    Name        = "ZYM_personal_plug~MatrixSwitcher",
+    Version     = "1.0.10",
+    BuildVersion = "1.0.10",
+    Id          = "659fd500-b5d8-4350-88f5-f0b7cb193574",
+    Author      = "Zhouyumou",
+    Description = "通用矩阵切换器（TCP，{I}/{O} 模板拼接命令，默认8x8最大16x16）",
+}
+
+-- 统一调色板（对齐 ZYM house style）
+Palette = {
+    Blue   = { 46, 63, 87 },
+    White  = { 255, 255, 255 },
+    Black  = { 0, 0, 0 },
+    Red    = { 220, 60, 60 },
+    Green  = { 60, 180, 60 },
+    Orange = { 230, 140, 30 },
+    Gray   = { 160, 160, 160 },
+    Cyan   = { 60, 160, 200 },
+}
+
+-- 自动生成：取自 Q-SYS Designer 10.4\lua\icons.lua 全部图标
+-- 候选列表在运行期经 Controls[...].Choices 赋值（见 setupIconChoices）；此处仅定义名<->字形映射。
+local ICON_CHOICES = {
+    "None",
+    "Address Book",
+    "Alert",
+    "Align Center",
+    "Align Justify",
+    "Align Left",
+    "Align Right",
+    "Anchor",
+    "Annotate",
+    "Archive",
+    "Arrow Down",
+    "Arrow Left",
+    "Arrow Right",
+    "Arrow Up",
+    "Arrows Compress",
+    "Arrows Expand",
+    "Arrows In",
+    "Arrows Out",
+    "Asl",
+    "Asterisk",
+    "At Sign",
+    "Background Color",
+    "Battery Empty",
+    "Battery Full",
+    "Battery Half",
+    "Bitcoin Circle",
+    "Bitcoin",
+    "Blind",
+    "Bluetooth",
+    "Bold",
+    "Book Bookmark",
+    "Book",
+    "Bookmark",
+    "Braille",
+    "Burst New",
+    "Burst Sale",
+    "Burst",
+    "Calendar",
+    "Camera",
+    "Check",
+    "Checkbox",
+    "Clipboard Notes",
+    "Clipboard Pencil",
+    "Clipboard",
+    "Clock",
+    "Closed Caption",
+    "Cloud",
+    "Comment Minus",
+    "Comment Quotes",
+    "Comment Video",
+    "Comment",
+    "Comments",
+    "Compass",
+    "Contrast",
+    "Credit Card",
+    "Crop",
+    "Crown",
+    "Css3",
+    "Database",
+    "Die Five",
+    "Die Four",
+    "Die One",
+    "Die Six",
+    "Die Three",
+    "Die Two",
+    "Dislike",
+    "Dollar Bill",
+    "Dollar",
+    "Download",
+    "Eject",
+    "Elevator",
+    "Euro",
+    "Eye",
+    "Fast Forward",
+    "Female Symbol",
+    "Female",
+    "Filter",
+    "First Aid",
+    "Flag",
+    "Folder Add",
+    "Folder Lock",
+    "Folder",
+    "Foot",
+    "Foundation",
+    "Graph Bar",
+    "Graph Horizontal",
+    "Graph Pie",
+    "Graph Trend",
+    "Guide Dog",
+    "Hearing Aid",
+    "Heart",
+    "Home",
+    "Html5",
+    "Indent Less",
+    "Indent More",
+    "Info",
+    "Italic",
+    "Key",
+    "Laptop",
+    "Layout",
+    "Lightbulb",
+    "Like",
+    "Link",
+    "List Bullet",
+    "List Number",
+    "List Thumbnails",
+    "List",
+    "Lock",
+    "Loop",
+    "Magnifying Glass",
+    "Mail",
+    "Male Female",
+    "Male Symbol",
+    "Male",
+    "Map",
+    "Marker",
+    "Megaphone",
+    "Microphone",
+    "Microphone None",
+    "Minus Circle",
+    "Minus",
+    "Mobile Signal",
+    "Mobile",
+    "Monitor",
+    "Mountains",
+    "Music",
+    "Next",
+    "No Dogs",
+    "No Smoking",
+    "Page Add",
+    "Page Copy",
+    "Page CSV",
+    "Page Delete",
+    "Page Doc",
+    "Page Edit",
+    "Page Export CSV",
+    "Page Export Doc",
+    "Page Export PDF",
+    "Page Export",
+    "Page Filled",
+    "Page Multiple",
+    "Page PDF",
+    "Page Remove",
+    "Page Search",
+    "Page",
+    "Paint Bucket",
+    "Paperclip",
+    "Pause",
+    "Paw",
+    "Paypal",
+    "Pencil",
+    "Photo",
+    "Play Circle",
+    "Play Video",
+    "Play",
+    "Plus",
+    "Pound",
+    "Power",
+    "Previous",
+    "Price Tag",
+    "Pricetag Multiple",
+    "Print",
+    "Prohibited",
+    "Projection Screen",
+    "Puzzle",
+    "Quote",
+    "Record",
+    "Refresh",
+    "Results Demographics",
+    "Results",
+    "Rewind Ten",
+    "Rewind",
+    "RSS",
+    "Safety Cone",
+    "Save",
+    "Share",
+    "Sheriff Badge",
+    "Shield",
+    "Shopping Bag",
+    "Shopping Cart",
+    "Shuffle",
+    "Skull",
+    "Sound",
+    "Star",
+    "Stop",
+    "Strikethrough",
+    "Subscript",
+    "Superscript",
+    "Tablet Landscape",
+    "Tablet Portrait",
+    "Target Two",
+    "Target",
+    "Telephone Accessible",
+    "Telephone",
+    "Telephone In",
+    "Telephone Out",
+    "Telephone Down",
+    "Text Color",
+    "Thumbnails",
+    "Ticket",
+    "Torso Business",
+    "Torso Female",
+    "Torso",
+    "Torsos All Female",
+    "Torsos All",
+    "Torsos Female Male",
+    "Torsos Male Female",
+    "Torsos",
+    "Trash",
+    "Trees",
+    "Trophy",
+    "Underline",
+    "Universal Access",
+    "Unlink",
+    "Unlock",
+    "Upload Cloud",
+    "Upload",
+    "USB",
+    "Video",
+    "Volume None",
+    "Volume Strike",
+    "Volume",
+    "Web",
+    "Wheelchair",
+    "Widget",
+    "Wrench",
+    "X Circle",
+    "X",
+    "Yen",
+    "Zoom In",
+    "Zoom Out",
+    "Circle",
+    "Box",
+    "Play Pause",
+    "Clover",
+}
+local ICON_GLYPHS = {
+    ["Address Book"] = string.char(0xef,0x84,0x80),
+    ["Alert"] = string.char(0xef,0x84,0x81),
+    ["Align Center"] = string.char(0xef,0x84,0x82),
+    ["Align Justify"] = string.char(0xef,0x84,0x83),
+    ["Align Left"] = string.char(0xef,0x84,0x84),
+    ["Align Right"] = string.char(0xef,0x84,0x85),
+    ["Anchor"] = string.char(0xef,0x84,0x86),
+    ["Annotate"] = string.char(0xef,0x84,0x87),
+    ["Archive"] = string.char(0xef,0x84,0x88),
+    ["Arrow Down"] = string.char(0xef,0x84,0x89),
+    ["Arrow Left"] = string.char(0xef,0x84,0x8a),
+    ["Arrow Right"] = string.char(0xef,0x84,0x8b),
+    ["Arrow Up"] = string.char(0xef,0x84,0x8c),
+    ["Arrows Compress"] = string.char(0xef,0x84,0x8d),
+    ["Arrows Expand"] = string.char(0xef,0x84,0x8e),
+    ["Arrows In"] = string.char(0xef,0x84,0x8f),
+    ["Arrows Out"] = string.char(0xef,0x84,0x90),
+    ["Asl"] = string.char(0xef,0x84,0x91),
+    ["Asterisk"] = string.char(0xef,0x84,0x92),
+    ["At Sign"] = string.char(0xef,0x84,0x93),
+    ["Background Color"] = string.char(0xef,0x84,0x94),
+    ["Battery Empty"] = string.char(0xef,0x84,0x95),
+    ["Battery Full"] = string.char(0xef,0x84,0x96),
+    ["Battery Half"] = string.char(0xef,0x84,0x97),
+    ["Bitcoin Circle"] = string.char(0xef,0x84,0x98),
+    ["Bitcoin"] = string.char(0xef,0x84,0x99),
+    ["Blind"] = string.char(0xef,0x84,0x9a),
+    ["Bluetooth"] = string.char(0xef,0x84,0x9b),
+    ["Bold"] = string.char(0xef,0x84,0x9c),
+    ["Book Bookmark"] = string.char(0xef,0x84,0x9d),
+    ["Book"] = string.char(0xef,0x84,0x9e),
+    ["Bookmark"] = string.char(0xef,0x84,0x9f),
+    ["Braille"] = string.char(0xef,0x84,0xa0),
+    ["Burst New"] = string.char(0xef,0x84,0xa1),
+    ["Burst Sale"] = string.char(0xef,0x84,0xa2),
+    ["Burst"] = string.char(0xef,0x84,0xa3),
+    ["Calendar"] = string.char(0xef,0x84,0xa4),
+    ["Camera"] = string.char(0xef,0x84,0xa5),
+    ["Check"] = string.char(0xef,0x84,0xa6),
+    ["Checkbox"] = string.char(0xef,0x84,0xa7),
+    ["Clipboard Notes"] = string.char(0xef,0x84,0xa8),
+    ["Clipboard Pencil"] = string.char(0xef,0x84,0xa9),
+    ["Clipboard"] = string.char(0xef,0x84,0xaa),
+    ["Clock"] = string.char(0xef,0x84,0xab),
+    ["Closed Caption"] = string.char(0xef,0x84,0xac),
+    ["Cloud"] = string.char(0xef,0x84,0xad),
+    ["Comment Minus"] = string.char(0xef,0x84,0xae),
+    ["Comment Quotes"] = string.char(0xef,0x84,0xaf),
+    ["Comment Video"] = string.char(0xef,0x84,0xb0),
+    ["Comment"] = string.char(0xef,0x84,0xb1),
+    ["Comments"] = string.char(0xef,0x84,0xb2),
+    ["Compass"] = string.char(0xef,0x84,0xb3),
+    ["Contrast"] = string.char(0xef,0x84,0xb4),
+    ["Credit Card"] = string.char(0xef,0x84,0xb5),
+    ["Crop"] = string.char(0xef,0x84,0xb6),
+    ["Crown"] = string.char(0xef,0x84,0xb7),
+    ["Css3"] = string.char(0xef,0x84,0xb8),
+    ["Database"] = string.char(0xef,0x84,0xb9),
+    ["Die Five"] = string.char(0xef,0x84,0xba),
+    ["Die Four"] = string.char(0xef,0x84,0xbb),
+    ["Die One"] = string.char(0xef,0x84,0xbc),
+    ["Die Six"] = string.char(0xef,0x84,0xbd),
+    ["Die Three"] = string.char(0xef,0x84,0xbe),
+    ["Die Two"] = string.char(0xef,0x84,0xbf),
+    ["Dislike"] = string.char(0xef,0x85,0x80),
+    ["Dollar Bill"] = string.char(0xef,0x85,0x81),
+    ["Dollar"] = string.char(0xef,0x85,0x82),
+    ["Download"] = string.char(0xef,0x85,0x83),
+    ["Eject"] = string.char(0xef,0x85,0x84),
+    ["Elevator"] = string.char(0xef,0x85,0x85),
+    ["Euro"] = string.char(0xef,0x85,0x86),
+    ["Eye"] = string.char(0xef,0x85,0x87),
+    ["Fast Forward"] = string.char(0xef,0x85,0x88),
+    ["Female Symbol"] = string.char(0xef,0x85,0x89),
+    ["Female"] = string.char(0xef,0x85,0x8a),
+    ["Filter"] = string.char(0xef,0x85,0x8b),
+    ["First Aid"] = string.char(0xef,0x85,0x8c),
+    ["Flag"] = string.char(0xef,0x85,0x8d),
+    ["Folder Add"] = string.char(0xef,0x85,0x8e),
+    ["Folder Lock"] = string.char(0xef,0x85,0x8f),
+    ["Folder"] = string.char(0xef,0x85,0x90),
+    ["Foot"] = string.char(0xef,0x85,0x91),
+    ["Foundation"] = string.char(0xef,0x85,0x92),
+    ["Graph Bar"] = string.char(0xef,0x85,0x93),
+    ["Graph Horizontal"] = string.char(0xef,0x85,0x94),
+    ["Graph Pie"] = string.char(0xef,0x85,0x95),
+    ["Graph Trend"] = string.char(0xef,0x85,0x96),
+    ["Guide Dog"] = string.char(0xef,0x85,0x97),
+    ["Hearing Aid"] = string.char(0xef,0x85,0x98),
+    ["Heart"] = string.char(0xef,0x85,0x99),
+    ["Home"] = string.char(0xef,0x85,0x9a),
+    ["Html5"] = string.char(0xef,0x85,0x9b),
+    ["Indent Less"] = string.char(0xef,0x85,0x9c),
+    ["Indent More"] = string.char(0xef,0x85,0x9d),
+    ["Info"] = string.char(0xef,0x85,0x9e),
+    ["Italic"] = string.char(0xef,0x85,0x9f),
+    ["Key"] = string.char(0xef,0x85,0xa0),
+    ["Laptop"] = string.char(0xef,0x85,0xa1),
+    ["Layout"] = string.char(0xef,0x85,0xa2),
+    ["Lightbulb"] = string.char(0xef,0x85,0xa3),
+    ["Like"] = string.char(0xef,0x85,0xa4),
+    ["Link"] = string.char(0xef,0x85,0xa5),
+    ["List Bullet"] = string.char(0xef,0x85,0xa6),
+    ["List Number"] = string.char(0xef,0x85,0xa7),
+    ["List Thumbnails"] = string.char(0xef,0x85,0xa8),
+    ["List"] = string.char(0xef,0x85,0xa9),
+    ["Lock"] = string.char(0xef,0x85,0xaa),
+    ["Loop"] = string.char(0xef,0x85,0xab),
+    ["Magnifying Glass"] = string.char(0xef,0x85,0xac),
+    ["Mail"] = string.char(0xef,0x85,0xad),
+    ["Male Female"] = string.char(0xef,0x85,0xae),
+    ["Male Symbol"] = string.char(0xef,0x85,0xaf),
+    ["Male"] = string.char(0xef,0x85,0xb0),
+    ["Map"] = string.char(0xef,0x85,0xb1),
+    ["Marker"] = string.char(0xef,0x85,0xb2),
+    ["Megaphone"] = string.char(0xef,0x85,0xb3),
+    ["Microphone"] = string.char(0xef,0x85,0xb4),
+    ["Microphone None"] = string.char(0xef,0x88,0x9e),
+    ["Minus Circle"] = string.char(0xef,0x85,0xb5),
+    ["Minus"] = string.char(0xef,0x85,0xb6),
+    ["Mobile Signal"] = string.char(0xef,0x85,0xb7),
+    ["Mobile"] = string.char(0xef,0x85,0xb8),
+    ["Monitor"] = string.char(0xef,0x85,0xb9),
+    ["Mountains"] = string.char(0xef,0x85,0xba),
+    ["Music"] = string.char(0xef,0x85,0xbb),
+    ["Next"] = string.char(0xef,0x85,0xbc),
+    ["No Dogs"] = string.char(0xef,0x85,0xbd),
+    ["No Smoking"] = string.char(0xef,0x85,0xbe),
+    ["Page Add"] = string.char(0xef,0x85,0xbf),
+    ["Page Copy"] = string.char(0xef,0x86,0x80),
+    ["Page CSV"] = string.char(0xef,0x86,0x81),
+    ["Page Delete"] = string.char(0xef,0x86,0x82),
+    ["Page Doc"] = string.char(0xef,0x86,0x83),
+    ["Page Edit"] = string.char(0xef,0x86,0x84),
+    ["Page Export CSV"] = string.char(0xef,0x86,0x85),
+    ["Page Export Doc"] = string.char(0xef,0x86,0x86),
+    ["Page Export PDF"] = string.char(0xef,0x86,0x87),
+    ["Page Export"] = string.char(0xef,0x86,0x88),
+    ["Page Filled"] = string.char(0xef,0x86,0x89),
+    ["Page Multiple"] = string.char(0xef,0x86,0x8a),
+    ["Page PDF"] = string.char(0xef,0x86,0x8b),
+    ["Page Remove"] = string.char(0xef,0x86,0x8c),
+    ["Page Search"] = string.char(0xef,0x86,0x8d),
+    ["Page"] = string.char(0xef,0x86,0x8e),
+    ["Paint Bucket"] = string.char(0xef,0x86,0x8f),
+    ["Paperclip"] = string.char(0xef,0x86,0x90),
+    ["Pause"] = string.char(0xef,0x86,0x91),
+    ["Paw"] = string.char(0xef,0x86,0x92),
+    ["Paypal"] = string.char(0xef,0x86,0x93),
+    ["Pencil"] = string.char(0xef,0x86,0x94),
+    ["Photo"] = string.char(0xef,0x86,0x95),
+    ["Play Circle"] = string.char(0xef,0x86,0x96),
+    ["Play Video"] = string.char(0xef,0x86,0x97),
+    ["Play"] = string.char(0xef,0x86,0x98),
+    ["Plus"] = string.char(0xef,0x86,0x99),
+    ["Pound"] = string.char(0xef,0x86,0x9a),
+    ["Power"] = string.char(0xef,0x86,0x9b),
+    ["Previous"] = string.char(0xef,0x86,0x9c),
+    ["Price Tag"] = string.char(0xef,0x86,0x9d),
+    ["Pricetag Multiple"] = string.char(0xef,0x86,0x9e),
+    ["Print"] = string.char(0xef,0x86,0x9f),
+    ["Prohibited"] = string.char(0xef,0x86,0xa0),
+    ["Projection Screen"] = string.char(0xef,0x86,0xa1),
+    ["Puzzle"] = string.char(0xef,0x86,0xa2),
+    ["Quote"] = string.char(0xef,0x86,0xa3),
+    ["Record"] = string.char(0xef,0x86,0xa4),
+    ["Refresh"] = string.char(0xef,0x86,0xa5),
+    ["Results Demographics"] = string.char(0xef,0x86,0xa6),
+    ["Results"] = string.char(0xef,0x86,0xa7),
+    ["Rewind Ten"] = string.char(0xef,0x86,0xa8),
+    ["Rewind"] = string.char(0xef,0x86,0xa9),
+    ["RSS"] = string.char(0xef,0x86,0xaa),
+    ["Safety Cone"] = string.char(0xef,0x86,0xab),
+    ["Save"] = string.char(0xef,0x86,0xac),
+    ["Share"] = string.char(0xef,0x86,0xad),
+    ["Sheriff Badge"] = string.char(0xef,0x86,0xae),
+    ["Shield"] = string.char(0xef,0x86,0xaf),
+    ["Shopping Bag"] = string.char(0xef,0x86,0xb0),
+    ["Shopping Cart"] = string.char(0xef,0x86,0xb1),
+    ["Shuffle"] = string.char(0xef,0x86,0xb2),
+    ["Skull"] = string.char(0xef,0x86,0xb3),
+    ["Sound"] = string.char(0xef,0x87,0xad),
+    ["Star"] = string.char(0xef,0x87,0xae),
+    ["Stop"] = string.char(0xef,0x87,0xaf),
+    ["Strikethrough"] = string.char(0xef,0x87,0xb0),
+    ["Subscript"] = string.char(0xef,0x87,0xb1),
+    ["Superscript"] = string.char(0xef,0x87,0xb2),
+    ["Tablet Landscape"] = string.char(0xef,0x87,0xb3),
+    ["Tablet Portrait"] = string.char(0xef,0x87,0xb4),
+    ["Target Two"] = string.char(0xef,0x87,0xb5),
+    ["Target"] = string.char(0xef,0x87,0xb6),
+    ["Telephone Accessible"] = string.char(0xef,0x87,0xb7),
+    ["Telephone"] = string.char(0xef,0x87,0xb8),
+    ["Telephone In"] = string.char(0xef,0x88,0x9b),
+    ["Telephone Out"] = string.char(0xef,0x88,0x9c),
+    ["Telephone Down"] = string.char(0xef,0x88,0x9d),
+    ["Text Color"] = string.char(0xef,0x87,0xb9),
+    ["Thumbnails"] = string.char(0xef,0x87,0xba),
+    ["Ticket"] = string.char(0xef,0x87,0xbb),
+    ["Torso Business"] = string.char(0xef,0x87,0xbc),
+    ["Torso Female"] = string.char(0xef,0x87,0xbd),
+    ["Torso"] = string.char(0xef,0x87,0xbe),
+    ["Torsos All Female"] = string.char(0xef,0x87,0xbf),
+    ["Torsos All"] = string.char(0xef,0x88,0x80),
+    ["Torsos Female Male"] = string.char(0xef,0x88,0x81),
+    ["Torsos Male Female"] = string.char(0xef,0x88,0x82),
+    ["Torsos"] = string.char(0xef,0x88,0x83),
+    ["Trash"] = string.char(0xef,0x88,0x84),
+    ["Trees"] = string.char(0xef,0x88,0x85),
+    ["Trophy"] = string.char(0xef,0x88,0x86),
+    ["Underline"] = string.char(0xef,0x88,0x87),
+    ["Universal Access"] = string.char(0xef,0x88,0x88),
+    ["Unlink"] = string.char(0xef,0x88,0x89),
+    ["Unlock"] = string.char(0xef,0x88,0x8a),
+    ["Upload Cloud"] = string.char(0xef,0x88,0x8b),
+    ["Upload"] = string.char(0xef,0x88,0x8c),
+    ["USB"] = string.char(0xef,0x88,0x8d),
+    ["Video"] = string.char(0xef,0x88,0x8e),
+    ["Volume None"] = string.char(0xef,0x88,0x8f),
+    ["Volume Strike"] = string.char(0xef,0x88,0x90),
+    ["Volume"] = string.char(0xef,0x88,0x91),
+    ["Web"] = string.char(0xef,0x88,0x92),
+    ["Wheelchair"] = string.char(0xef,0x88,0x93),
+    ["Widget"] = string.char(0xef,0x88,0x94),
+    ["Wrench"] = string.char(0xef,0x88,0x95),
+    ["X Circle"] = string.char(0xef,0x88,0x96),
+    ["X"] = string.char(0xef,0x88,0x97),
+    ["Yen"] = string.char(0xef,0x88,0x98),
+    ["Zoom In"] = string.char(0xef,0x88,0x99),
+    ["Zoom Out"] = string.char(0xef,0x88,0x9a),
+    ["Circle"] = string.char(0xef,0x88,0xa0),
+    ["Box"] = string.char(0xef,0x88,0xa1),
+    ["Play Pause"] = string.char(0xef,0x88,0xa2),
+    ["Clover"] = string.char(0xef,0x88,0xa3),
+}
+
+
+function GetColor(props)
+    return Palette.Blue
+end
+
+-- ---------------------------------------------------------------------------
+-- 设计期属性（Properties；运行时只读）
+-- ---------------------------------------------------------------------------
+function GetProperties()
+    return {
+        { Name = "Num Inputs",         Type = "integer", Min = 1, Max = 16,    Value = 8 },
+        { Name = "Num Outputs",        Type = "integer", Min = 1, Max = 16,    Value = 8 },
+        { Name = "IP Address",         Type = "string",  Value = "192.168.1.10" },
+        { Name = "Port",               Type = "integer", Min = 1, Max = 65535, Value = 23 },
+        { Name = "Auto Reconnect",     Type = "boolean", Value = true },
+        { Name = "Reconnect Interval", Type = "integer", Min = 1, Max = 60,    Value = 5 },
+        { Name = "Disable Internal Send", Type = "boolean", Value = false },
+    }
+end
+
+function RectifyProperties(props)
+    if props["Num Inputs"].Value < 1 then props["Num Inputs"].Value = 1 end
+    if props["Num Inputs"].Value > 16 then props["Num Inputs"].Value = 16 end
+    if props["Num Outputs"].Value < 1 then props["Num Outputs"].Value = 1 end
+    if props["Num Outputs"].Value > 16 then props["Num Outputs"].Value = 16 end
+    if props["Port"].Value < 1 then props["Port"].Value = 1 end
+    if props["Port"].Value > 65535 then props["Port"].Value = 65535 end
+end
+
+function GetPrettyName(props)
+    return "Matrix " .. props["Num Inputs"].Value .. "x" .. props["Num Outputs"].Value ..
+           " (" .. (props["IP Address"].Value or "?") .. ")"
+end
+
+PageNames = { "Main", "Config" }
+
+function GetPages(props)
+    local pages = {}
+    for _, v in ipairs(PageNames) do table.insert(pages, { name = v }) end
+    return pages
+end
+
+-- ---------------------------------------------------------------------------
+-- 控件定义（Controls；Count 由 props 驱动 -> 数量可自定义）
+--   Count>=2 为数组，运行时用 Controls["Name"][idx]；layout 名为 "Name idx"（带空格）
+-- ---------------------------------------------------------------------------
+function GetControls(props)
+    local nIn  = props["Num Inputs"].Value
+    local nOut = props["Num Outputs"].Value
+    local c = {}
+    -- Routing（Main 页）
+    table.insert(c, { Name = "Input",       ControlType = "Button", ButtonType = "Toggle",  UserPin = true,  PinStyle = "Both",   Count = nIn })
+    table.insert(c, { Name = "Output",      ControlType = "Button", ButtonType = "Toggle",  UserPin = true,  PinStyle = "Both",   Count = nOut })
+    -- Connection（Main 页）
+    table.insert(c, { Name = "Connect",     ControlType = "Button", ButtonType = "Toggle",  UserPin = true,  PinStyle = "Both",   Count = 1 })
+    table.insert(c, { Name = "Status",      ControlType = "Button", ButtonType = "Toggle",  UserPin = true,  PinStyle = "Output", Count = 1 })
+    table.insert(c, { Name = "Status_Text", ControlType = "Text",                          UserPin = true,  PinStyle = "Output", Count = 1 })
+    table.insert(c, { Name = "IP_Display",  ControlType = "Text",                          UserPin = false, PinStyle = "Output", Count = 1 })
+    -- Status / Log（Main 页）
+    table.insert(c, { Name = "Armed",       ControlType = "Text",                          UserPin = true,  PinStyle = "Output", Count = 1 })
+    table.insert(c, { Name = "Log",         ControlType = "Text",                          UserPin = true,  PinStyle = "Output", Count = 1 })
+    -- 引出：最终控制码输出（原始文本 / \xNN 转义，后者可直接接 Command Buttons）
+    table.insert(c, { Name = "Cmd Out Raw", ControlType = "Text",                          UserPin = true,  PinStyle = "Output", Count = 1 })
+    table.insert(c, { Name = "Cmd Out Hex", ControlType = "Text",                          UserPin = true,  PinStyle = "Output", Count = 1 })
+    -- 引出：命令变化时的触发脉冲（接 Command Buttons 触发输入，自动发送）
+    table.insert(c, { Name = "Send Trig",   ControlType = "Button", ButtonType = "Trigger", UserPin = true,  PinStyle = "Both",   Count = 1 })
+    table.insert(c, { Name = "Clear Log",   ControlType = "Button", ButtonType = "Trigger", UserPin = true,  PinStyle = "Both",   Count = 1 })
+    -- Config 页（名字 / 代码 / 模板，运行时面板编辑）
+    table.insert(c, { Name = "Input Name",  ControlType = "Text",                          UserPin = false, PinStyle = "Input",  Count = nIn })
+    table.insert(c, { Name = "Input Code",  ControlType = "Text",                          UserPin = false, PinStyle = "Input",  Count = nIn })
+    table.insert(c, { Name = "Input Icon",  ControlType = "Text",                         UserPin = false, PinStyle = "Input",  Count = nIn })
+    table.insert(c, { Name = "Input Icon Prev", ControlType = "Button", ButtonType = "Momentary", UserPin = false, PinStyle = "Input", Count = nIn })
+    table.insert(c, { Name = "Input Label",    ControlType = "Text",                         UserPin = false, PinStyle = "Input",  Count = nIn })
+    table.insert(c, { Name = "Output Name", ControlType = "Text",                          UserPin = false, PinStyle = "Input",  Count = nOut })
+    table.insert(c, { Name = "Output Code", ControlType = "Text",                          UserPin = false, PinStyle = "Input",  Count = nOut })
+    table.insert(c, { Name = "Output Icon", ControlType = "Text",                         UserPin = false, PinStyle = "Input",  Count = nOut })
+    table.insert(c, { Name = "Output Icon Prev", ControlType = "Button", ButtonType = "Momentary", UserPin = false, PinStyle = "Input", Count = nOut })
+    table.insert(c, { Name = "Output Label",    ControlType = "Text",                         UserPin = false, PinStyle = "Input",  Count = nOut })
+    table.insert(c, { Name = "Cmd Template",ControlType = "Text",                          UserPin = false, PinStyle = "Input",  Count = 1 })
+    return c
+end
+
+-- ---------------------------------------------------------------------------
+-- UI 布局（GetControlLayout；按 page_index 分支 Main / Config）
+-- ---------------------------------------------------------------------------
+function GetControlLayout(props)
+    local layout = {}
+    local graphics = {}
+    local fs = 12
+    local nIn  = props["Num Inputs"].Value
+    local nOut = props["Num Outputs"].Value
+    local page = PageNames[props["page_index"].Value]
+
+    -- 标题栏（两页共用）
+    table.insert(graphics, { Type = "Text", Text = "Matrix Switcher  " .. nIn .. "x" .. nOut,
+        FontSize = 14, HTextAlign = "Left", Position = {8, 4}, Size = {420, 22} })
+    table.insert(graphics, { Type = "Text", Text = "v" .. PluginInfo.Version,
+        FontSize = fs, HTextAlign = "Right", Position = {580, 6}, Size = {80, 18} })
+
+    if page == "Main" then
+        -- === Connection Group ===
+        table.insert(graphics, { Type = "GroupBox", Text = "Connection", FontSize = fs, HTextAlign = "Left",
+            Fill = Palette.White, StrokeColor = Palette.Black, StrokeWidth = 1, CornerRadius = 6,
+            Position = {8, 30}, Size = {664, 82} })
+        table.insert(graphics, { Type = "Text", Text = "Device IP:", FontSize = fs, HTextAlign = "Left", Position = {22, 56}, Size = {80, 18} })
+        layout["IP_Display"]  = { PrettyName = "IP Display", Style = "Text", FontSize = 13, HTextAlign = "Left", Position = {108, 52}, Size = {180, 26} }
+        layout["Connect"]     = { PrettyName = "Connect", Legend = "Connect", Style = "Button", ButtonStyle = "Toggle", Color = Palette.Blue, Margin = 1, Position = {306, 50}, Size = {110, 30} }
+        layout["Status"]      = { PrettyName = "Status", Style = "Led", Color = Palette.Green, Position = {434, 54}, Size = {24, 24} }
+        layout["Status_Text"] = { PrettyName = "Status Text", Style = "Text", FontSize = 13, HTextAlign = "Left", Position = {466, 54}, Size = {190, 24} }
+
+        -- === Routing Group ===
+        -- 按钮宽度自适应（8x8 宽松，16x16 变窄），两排对齐
+        local maxn = math.max(nIn, nOut)
+        local step = math.floor(658 / maxn)
+        if step < 41 then step = 41 end
+        if step > 82 then step = 82 end
+        local bw = step - 4
+
+        table.insert(graphics, { Type = "GroupBox", Text = "Routing  (select Output -> route Input)", FontSize = fs, HTextAlign = "Left",
+            Fill = Palette.White, StrokeColor = Palette.Black, StrokeWidth = 1, CornerRadius = 6,
+            Position = {8, 120}, Size = {664, 150} })
+        table.insert(graphics, { Type = "Text", Text = "Outputs (arm):", FontSize = fs, HTextAlign = "Left", Position = {20, 138}, Size = {220, 16} })
+        layout["Armed"] = { PrettyName = "Armed Output", Style = "Text", FontSize = 13, HTextAlign = "Right", Position = {520, 136}, Size = {140, 20} }
+        for j = 1, nOut do
+            layout["Output " .. j] = { PrettyName = "Output " .. j, Legend = "O" .. j, Style = "Button", ButtonStyle = "Toggle",
+                Color = Palette.Orange, Margin = 1, IconAlignment = "Left", Position = { 18 + (j-1)*step, 158 }, Size = { bw, 24 } }
+            layout["Output Label " .. j] = { PrettyName = "Output Label " .. j, Style = "Text", FontSize = 10, HTextAlign = "Center", Position = { 18 + (j-1)*step, 184 }, Size = { bw, 14 } }
+        end
+        table.insert(graphics, { Type = "Text", Text = "Inputs (route / highlight):", FontSize = fs, HTextAlign = "Left", Position = {20, 200}, Size = {320, 16} })
+        for i = 1, nIn do
+            layout["Input " .. i] = { PrettyName = "Input " .. i, Legend = "I" .. i, Style = "Button", ButtonStyle = "Toggle",
+                Color = Palette.Blue, Margin = 1, IconAlignment = "Left", Position = { 18 + (i-1)*step, 220 }, Size = { bw, 24 } }
+            layout["Input Label " .. i] = { PrettyName = "Input Label " .. i, Style = "Text", FontSize = 10, HTextAlign = "Center", Position = { 18 + (i-1)*step, 246 }, Size = { bw, 14 } }
+        end
+
+        -- === Log Group ===
+        table.insert(graphics, { Type = "GroupBox", Text = "Log", FontSize = fs, HTextAlign = "Left",
+            Fill = Palette.White, StrokeColor = Palette.Black, StrokeWidth = 1, CornerRadius = 6,
+            Position = {8, 280}, Size = {664, 96} })
+        layout["Log"]       = { PrettyName = "Log", Style = "Text", FontSize = 10, HTextAlign = "Left", VTextAlign = "Top", Position = {20, 300}, Size = {520, 68} }
+        layout["Clear Log"] = { PrettyName = "Clear Log", Legend = "Clear Log", Style = "Button", ButtonStyle = "Trigger", Color = Palette.Gray, Margin = 1, Position = {552, 300}, Size = {108, 28} }
+        layout["Send Trig"] = { PrettyName = "Send Trig", Legend = "Send Trig", Style = "Button", ButtonStyle = "Trigger", Color = Palette.Orange, Margin = 1, Position = {552, 334}, Size = {108, 28} }
+
+        -- === Notes Group (bilingual) ===
+        table.insert(graphics, { Type = "GroupBox", Text = "Notes", FontSize = fs, HTextAlign = "Left",
+            Fill = Palette.White, StrokeColor = Palette.Black, StrokeWidth = 1, CornerRadius = 6,
+            Position = {8, 384}, Size = {664, 130} })
+        local ny = 400
+        local function note(t)
+            table.insert(graphics, { Type = "Text", Text = t, FontSize = 9, HTextAlign = "Left", Position = {18, ny}, Size = {644, 13} })
+            ny = ny + 13
+        end
+        note("Route: 先点 Output 选中(保持高亮，并点亮其当前输入) -> 再点 Input 路由到该输出；切换后 Output 仍保持高亮。")
+        note("路由：先点输出选中并高亮 -> 再点输入路由；选中输出时其对应输入同步高亮，切换后输出保持高亮。")
+        note("Switch command built on Config page via template with {I}=input code, {O}=output code (order/free text). \\r/\\n -> CR/LF.")
+        note("切换命令在 Config 页用模板拼接：{I}=输入代码，{O}=输出代码（顺序/前后缀自由）；\\r/\\n 会转为回车/换行。")
+        note("Edit names/codes on Config page (live). Changing Num Inputs/Outputs requires delete + re-drag the component.")
+        note("在 Config 页改名字/代码（实时生效）。修改输入/输出数量后需删除并重新拖入本组件。")
+
+        -- === Command Out Group (引出引脚显示) ===
+        table.insert(graphics, { Type = "GroupBox", Text = "Command Out (patched pins)", FontSize = fs, HTextAlign = "Left",
+            Fill = Palette.White, StrokeColor = Palette.Black, StrokeWidth = 1, CornerRadius = 6,
+            Position = {8, 520}, Size = {664, 60} })
+        table.insert(graphics, { Type = "Text", Text = "Raw:", FontSize = fs, HTextAlign = "Left", Position = {20, 538}, Size = {46, 18} })
+        layout["Cmd Out Raw"] = { PrettyName = "Cmd Out Raw", Style = "Text", FontSize = 11, HTextAlign = "Left", Position = {70, 534}, Size = {590, 22} }
+        table.insert(graphics, { Type = "Text", Text = "Hex:", FontSize = fs, HTextAlign = "Left", Position = {20, 562}, Size = {46, 18} })
+        layout["Cmd Out Hex"] = { PrettyName = "Cmd Out Hex", Style = "Text", FontSize = 11, HTextAlign = "Left", Position = {70, 558}, Size = {590, 22} }
+
+    elseif page == "Config" then
+        -- === Command Template Group ===
+        table.insert(graphics, { Type = "GroupBox", Text = "Command Template", FontSize = fs, HTextAlign = "Left",
+            Fill = Palette.White, StrokeColor = Palette.Black, StrokeWidth = 1, CornerRadius = 6,
+            Position = {8, 30}, Size = {664, 88} })
+        table.insert(graphics, { Type = "Text", Text = "Template: {I}=input code, {O}=output code (free text); \\r/\\n=CR/LF, \\xNN=raw hex byte", FontSize = 10, HTextAlign = "Left", Position = {20, 48}, Size = {640, 16} })
+        layout["Cmd Template"] = { PrettyName = "Cmd Template", Style = "Text", FontSize = 13, HTextAlign = "Left", Position = {20, 68}, Size = {430, 26} }
+        table.insert(graphics, { Type = "Text", Text = "e.g.  IN{I} OUT{O}\\r", FontSize = 10, HTextAlign = "Left", Position = {460, 72}, Size = {200, 18} })
+
+        -- === Names & Codes Group ===
+        local maxk = math.max(nIn, nOut)
+        local gh = 40 + maxk * 21 + 10
+        table.insert(graphics, { Type = "GroupBox", Text = "Names & Codes", FontSize = fs, HTextAlign = "Left",
+            Fill = Palette.White, StrokeColor = Palette.Black, StrokeWidth = 1, CornerRadius = 6,
+            Position = {8, 126}, Size = {664, gh} })
+        table.insert(graphics, { Type = "Text", Text = "Input Name", FontSize = 10, HTextAlign = "Left", Position = {24, 146},  Size = {108, 16} })
+        table.insert(graphics, { Type = "Text", Text = "In Code",    FontSize = 10, HTextAlign = "Left", Position = {140, 146}, Size = {48, 16} })
+        table.insert(graphics, { Type = "Text", Text = "In Icon",    FontSize = 10, HTextAlign = "Left", Position = {194, 146}, Size = {80, 16} })
+        table.insert(graphics, { Type = "Text", Text = "Prev",       FontSize = 10, HTextAlign = "Left", Position = {280, 146}, Size = {26, 16} })
+        table.insert(graphics, { Type = "Text", Text = "Output Name",FontSize = 10, HTextAlign = "Left", Position = {312, 146}, Size = {108, 16} })
+        table.insert(graphics, { Type = "Text", Text = "Out Code",   FontSize = 10, HTextAlign = "Left", Position = {426, 146}, Size = {48, 16} })
+        table.insert(graphics, { Type = "Text", Text = "Out Icon",   FontSize = 10, HTextAlign = "Left", Position = {480, 146}, Size = {80, 16} })
+        table.insert(graphics, { Type = "Text", Text = "Prev",       FontSize = 10, HTextAlign = "Left", Position = {566, 146}, Size = {26, 16} })
+        for k = 1, maxk do
+            local y = 166 + (k-1) * 21
+            if k <= nIn then
+                layout["Input Name " .. k] = { PrettyName = "Input Name " .. k, Style = "Text",     FontSize = 11, HTextAlign = "Left", Position = {24, y},  Size = {108, 20} }
+                layout["Input Code " .. k] = { PrettyName = "Input Code " .. k, Style = "Text",     FontSize = 11, HTextAlign = "Left", Position = {140, y}, Size = {48, 20} }
+                layout["Input Icon " .. k] = { PrettyName = "Input Icon " .. k, Style = "ComboBox", FontSize = 11, HTextAlign = "Left", Position = {194, y}, Size = {80, 20} }
+                layout["Input Icon Prev " .. k] = { PrettyName = "Input Icon Preview " .. k, Style = "Button", ButtonStyle = "Momentary", Color = Palette.Blue, Margin = 1, Position = {280, y}, Size = {26, 20} }
+            end
+            if k <= nOut then
+                layout["Output Name " .. k] = { PrettyName = "Output Name " .. k, Style = "Text",     FontSize = 11, HTextAlign = "Left", Position = {312, y}, Size = {108, 20} }
+                layout["Output Code " .. k] = { PrettyName = "Output Code " .. k, Style = "Text",     FontSize = 11, HTextAlign = "Left", Position = {426, y}, Size = {48, 20} }
+                layout["Output Icon " .. k] = { PrettyName = "Output Icon " .. k, Style = "ComboBox", FontSize = 11, HTextAlign = "Left", Position = {480, y}, Size = {80, 20} }
+                layout["Output Icon Prev " .. k] = { PrettyName = "Output Icon Preview " .. k, Style = "Button", ButtonStyle = "Momentary", Color = Palette.Blue, Margin = 1, Position = {566, y}, Size = {26, 20} }
+            end
+        end
+    end
+
+    return layout, graphics
+end
+
+function GetComponents(props)
+    return {}
+end
+
+-- ===========================================================================
+-- 以下为运行时代码（Runtime Code）
+-- ===========================================================================
+
+-- 全局对象（必须全局，防 GC）
+sock       = nil
+rxBuf      = ""
+lastRxTime = 0
+watchdog   = nil
+route          = {}      -- route[output] = input
+selectedOutput = nil    -- 当前选中的输出（保持高亮，切换后不清）
+numIns     = 0
+numOuts    = 0
+logLines   = {}
+MAX_LOG    = 6
+
+local function getIP()   return Properties["IP Address"].Value or "" end
+local function getPort() return Properties["Port"].Value or 23 end
+local function isAutoReconnect() return Properties["Auto Reconnect"].Value ~= false end
+local function getReconnectInterval() return Properties["Reconnect Interval"].Value or 5 end
+
+local function log(msg)
+    table.insert(logLines, msg)
+    while #logLines > MAX_LOG do table.remove(logLines, 1) end
+    if Controls["Log"] then Controls["Log"].String = table.concat(logLines, "\n") end
+end
+
+local function setStatus(s)
+    if Controls["Status"] then Controls["Status"].Boolean = (s == "Connected") end
+    if Controls["Status_Text"] then Controls["Status_Text"].String = s end
+end
+
+-- plain find 全替换（避开 Lua 模式 % 坑），用于 {I}/{O} 占位符
+local function replaceAll(s, find, repl)
+    local out, idx = {}, 1
+    while true do
+        local a, b = s:find(find, idx, true)
+        if not a then out[#out+1] = s:sub(idx); break end
+        out[#out+1] = s:sub(idx, a - 1)
+        out[#out+1] = repl
+        idx = b + 1
+    end
+    return table.concat(out)
+end
+
+-- 转义展开：\r \n 以及 \xNN（两位十六进制 -> 真实字节）
+local function expandEscapes(s)
+    s = s:gsub("\\r", "\r")
+    s = s:gsub("\\n", "\n")
+    s = s:gsub("\\x(%x%x)", function(hx) return string.char(tonumber(hx, 16)) end)
+    return s
+end
+
+-- 拼接最终切换命令：模板 {I}/{O} + \r\n / \xNN 转义
+local function buildSwitchCmd(i, j)
+    local t = (Controls["Cmd Template"] and Controls["Cmd Template"].String) or ""
+    t = replaceAll(t, "{I}", (Controls["Input Code"][i] and Controls["Input Code"][i].String) or "")
+    t = replaceAll(t, "{O}", (Controls["Output Code"][j] and Controls["Output Code"][j].String) or "")
+    t = expandEscapes(t)
+    return t
+end
+
+-- 把命令字节转成 \xNN 转义文本（供 Command Buttons 等直接解析为真实字节）
+local function toHexEscaped(s)
+    local t = {}
+    for i = 1, #s do
+        t[i] = string.format("\\x%02X", string.byte(s, i))
+    end
+    return table.concat(t, "")
+end
+
+local function sendRoute(i, j)
+    local cmd = buildSwitchCmd(i, j)
+    local disp = cmd:gsub("\r", "\\r"):gsub("\n", "\\n")
+    -- 引出引脚：原始命令 + \x 转义命令（可直接接 Command Buttons）
+    if Controls["Cmd Out Raw"] then Controls["Cmd Out Raw"].String = cmd end
+    if Controls["Cmd Out Hex"] then Controls["Cmd Out Hex"].String = toHexEscaped(cmd) end
+    -- 命令变化时脉冲 Trig（接 Command Buttons 触发输入，自动发送）
+    if Controls["Send Trig"] then Controls["Send Trig"]:Trigger() end
+    -- 内部 TCP 发送（可被属性关闭，避免与外部发送器重复发）
+    if not Properties["Disable Internal Send"].Value then
+        if sock and sock.IsConnected then
+            sock:Write(cmd)
+            log("TX In" .. i .. "->Out" .. j .. ": " .. disp)
+        else
+            log("TX 忽略(未连接) In" .. i .. "->Out" .. j .. ": " .. disp)
+        end
+    else
+        log("TX(pin only) In" .. i .. "->Out" .. j .. ": " .. disp)
+    end
+end
+
+local function refreshHighlights()
+    for j = 1, numOuts do
+        if Controls["Output"][j] then
+            -- 选中输出保持高亮（切换后依然）
+            Controls["Output"][j].Boolean = (j == selectedOutput)
+        end
+    end
+    for i = 1, numIns do
+        if Controls["Input"][i] then
+            -- 输入高亮：它是“当前选中输出”所路由的输入（选中输出时同步点亮对应输入）
+            Controls["Input"][i].Boolean = (selectedOutput ~= nil and route[selectedOutput] == i)
+        end
+    end
+    if Controls["Armed"] then Controls["Armed"].String = selectedOutput and ("Out " .. selectedOutput) or "-" end
+end
+
+-- 点输出：选中并保持高亮（radio 式：同一输出再点一次=取消）
+local function onOutputClick(j, c)
+    if c.Boolean then
+        selectedOutput = j
+    elseif selectedOutput == j then
+        selectedOutput = nil
+    end
+    refreshHighlights()
+end
+
+-- 点输入：路由到“当前选中输出”（先选输出再选输入）
+local function onInputClick(i, c)
+    if not c.Boolean then
+        -- 取消该输入：若正喂给当前选中输出，则清除该路由
+        if selectedOutput and route[selectedOutput] == i then
+            route[selectedOutput] = nil
+        end
+        refreshHighlights()
+        return
+    end
+    -- 必须先选输出（先选输出再选输入）
+    if not selectedOutput then
+        log("先选输出通道，再选输入（In" .. i .. " 暂未路由）")
+        refreshHighlights()
+        return
+    end
+    -- 路由到当前选中输出：旧输入灭、新输入亮，输出保持高亮
+    local oldI = route[selectedOutput]
+    route[selectedOutput] = i
+    sendRoute(i, selectedOutput)
+    if oldI and oldI ~= i and Controls["Input"][oldI] then
+        Controls["Input"][oldI].Boolean = false
+    end
+    refreshHighlights()
+end
+
+local function resetRouting()
+    route = {}
+    selectedOutput = nil
+    refreshHighlights()
+end
+
+local function handleResponse(line)
+    log("RX: " .. line)
+end
+
+local function onData()
+    rxBuf = rxBuf .. sock:Read(sock.BufferLength)
+    lastRxTime = os.time()
+    local pos = 1
+    while true do
+        local nl = rxBuf:find("[\r\n]", pos)
+        if not nl then break end
+        local line = rxBuf:sub(pos, nl - 1)
+        local nxt = rxBuf:find("[^\r\n]", nl)
+        if not nxt then pos = #rxBuf + 1; break end
+        pos = nxt
+        local t = line:match("^%s*(.-)%s*$")
+        if t ~= "" then handleResponse(t) end
+    end
+    rxBuf = rxBuf:sub(pos)
+end
+
+function connect()
+    if sock then
+        sock:Disconnect()
+        sock = nil
+    end
+    sock = TcpSocket.New()
+    -- 注意：.Reconnect 是"正在重连"事件回调（function），不是开关！
+    -- 开关是 .ReconnectTimeout（秒，0=禁用自动重连，默认5）
+    sock.ReconnectTimeout = isAutoReconnect() and getReconnectInterval() or 0
+    sock.Reconnect = function(s)
+        setStatus("Reconnecting")
+        lastRxTime = os.time()
+    end
+    sock.Connected = function(s)
+        if Controls["Connect"] then Controls["Connect"].Boolean = true end
+        setStatus("Connected")
+        lastRxTime = os.time()
+        if watchdog then watchdog:Start(5) end
+        log("Connected " .. getIP() .. ":" .. getPort())
+    end
+    sock.Data = function(s) onData() end
+    sock.Closed = function(s)
+        if Controls["Connect"] then Controls["Connect"].Boolean = false end
+        if watchdog then watchdog:Stop() end
+        setStatus("Disconnected")
+        log("Connection closed")
+    end
+    sock.Error = function(s)
+        if Controls["Connect"] then Controls["Connect"].Boolean = false end
+        if watchdog then watchdog:Stop() end
+        setStatus("Error")
+        log("Connection error")
+    end
+    local ip = getIP()
+    if ip == "" then
+        setStatus("Set IP Address in Properties")
+        return
+    end
+    setStatus("Connecting")
+    sock:Connect(ip, getPort())
+end
+
+function disconnect()
+    if watchdog then watchdog:Stop() end
+    if sock then sock:Disconnect() end
+    if Controls["Connect"] then Controls["Connect"].Boolean = false end
+    setStatus("Disconnected")
+end
+
+-- ---------------------------------------------------------------------------
+-- 设计期守卫：Designer 加载插件时整段执行脚本提取 Get*，但此时 Controls 为 nil。
+-- 运行期代码（EventHandler 绑定 / Timer.New / init）必须放在此守卫之后。
+-- ---------------------------------------------------------------------------
+if not Controls then
+    return
+end
+
+-- ---------------------------------------------------------------------------
+-- 运行期：读取数量
+-- ---------------------------------------------------------------------------
+numIns  = Properties["Num Inputs"].Value
+numOuts = Properties["Num Outputs"].Value
+
+local json = require("rapidjson")
+
+-- ComboBox 的候选列表必须在运行期赋值（GetControls 里的 Choices 字段会被忽略，
+-- 这正是上一版下拉框空白的根因）。同时给一个默认 "None"。
+local function setupIconChoices()
+    for i = 1, numIns do
+        local c = Controls["Input Icon"] and Controls["Input Icon"][i]
+        if c then
+            c.Choices = ICON_CHOICES
+            if c.String == "" then c.String = "None" end
+        end
+    end
+    for j = 1, numOuts do
+        local c = Controls["Output Icon"] and Controls["Output Icon"][j]
+        if c then
+            c.Choices = ICON_CHOICES
+            if c.String == "" then c.String = "None" end
+        end
+    end
+end
+setupIconChoices()
+
+-- 把选中图标 + 通道名写到按钮面（图标用 Q-SYS 图标字体字形，取自 icons.lua；保留高亮）
+local function setButtonFace(kind, idx)
+    local btn = Controls[kind] and Controls[kind][idx]
+    if not btn then return end
+    local nameCtrl = Controls[kind .. " Name"] and Controls[kind .. " Name"][idx]
+    local name = (nameCtrl and nameCtrl.String ~= "") and nameCtrl.String or (kind .. " " .. idx)
+    local iconCtrl = Controls[kind .. " Icon"] and Controls[kind .. " Icon"][idx]
+    local sel = iconCtrl and iconCtrl.String or "None"
+    local glyph = (sel ~= "None" and ICON_GLYPHS[sel]) and ICON_GLYPHS[sel] or nil
+    -- 主路由按钮：只放图标（图标字体在窄按钮上最清晰；文字放到按钮下方的名字标签，保证任何宽度都可见）
+    btn.Legend = glyph and json.encode{ IconString = glyph } or name
+    -- 按钮下方的名字标签：始终显示通道名（#2 要求图标与文字同时可见）
+    local lbl = Controls[kind .. " Label"] and Controls[kind .. " Label"][idx]
+    if lbl then lbl.String = name end
+    -- Config 页预览按钮：仅显示图标（#1 要求选择图标时可看到预览）
+    local prev = Controls[kind .. " Icon Prev"] and Controls[kind .. " Icon Prev"][idx]
+    if prev then
+        prev.Legend = glyph and json.encode{ IconString = glyph } or ""
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- 看门狗（os.time() 墙上时钟；超时无数据强制重连）
+-- ---------------------------------------------------------------------------
+local WATCHDOG_TIMEOUT = 30
+watchdog = Timer.New()
+watchdog.EventHandler = function()
+    if sock and sock.IsConnected and isAutoReconnect() and (os.time() - lastRxTime) > WATCHDOG_TIMEOUT then
+        log("看门狗：超过 " .. WATCHDOG_TIMEOUT .. "s 无数据，强制重连")
+        connect()
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- 控件事件绑定
+-- ---------------------------------------------------------------------------
+for i = 1, numIns do
+    Controls["Input"][i].EventHandler = function(c) onInputClick(i, c) end
+    Controls["Input Name"][i].EventHandler = function(c) setButtonFace("Input", i) end
+    Controls["Input Icon"][i].EventHandler = function(c) setButtonFace("Input", i) end
+end
+for j = 1, numOuts do
+    Controls["Output"][j].EventHandler = function(c) onOutputClick(j, c) end
+    Controls["Output Name"][j].EventHandler = function(c) setButtonFace("Output", j) end
+    Controls["Output Icon"][j].EventHandler = function(c) setButtonFace("Output", j) end
+end
+Controls["Connect"].EventHandler = function(c)
+    if c.Boolean then connect() else disconnect() end
+end
+Controls["Clear Log"].EventHandler = function(c)
+    logLines = {}
+    Controls["Log"].String = ""
+end
+
+-- ---------------------------------------------------------------------------
+-- 初始化：补默认值 + 批量 Legend + 复位 + 自动连接
+-- ---------------------------------------------------------------------------
+for i = 1, numIns do
+    if Controls["Input Name"][i].String == "" then Controls["Input Name"][i].String = "In " .. i end
+    if Controls["Input Code"][i].String == "" then Controls["Input Code"][i].String = tostring(i) end
+    setButtonFace("Input", i)
+end
+for j = 1, numOuts do
+    if Controls["Output Name"][j].String == "" then Controls["Output Name"][j].String = "Out " .. j end
+    if Controls["Output Code"][j].String == "" then Controls["Output Code"][j].String = tostring(j) end
+    setButtonFace("Output", j)
+end
+if Controls["Cmd Template"].String == "" then Controls["Cmd Template"].String = "IN{I} OUT{O}\\r" end
+
+if Controls["Connect"] then Controls["Connect"].Legend = "Connect" end
+if Controls["Clear Log"] then Controls["Clear Log"].Legend = "Clear Log" end
+
+setStatus("Disconnected")
+if Controls["IP_Display"] then Controls["IP_Display"].String = getIP() end
+resetRouting()
+
+-- 启动自动连接（配了 IP 即自动连；保留手动 Connect 按钮可重连）
+if getIP() ~= "" then
+    connect()
+else
+    setStatus("Set IP Address in Properties")
+end
+
+print("[Matrix] MatrixSwitcher " .. numIns .. "x" .. numOuts .. " loaded.")
